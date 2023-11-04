@@ -3,11 +3,14 @@ int stepPin = 5;
 const int stepsPerRevolution = 200;  // for your motor
 const int stepsFor90Degrees = stepsPerRevolution / 4;  // Calculate steps needed for 90 degrees
 const int stepsFor180Degrees = stepsPerRevolution / 2;  // Calculate steps needed for 180 degrees
-
+int redLed = 13;
+int greenled = 12;
 // Adjust the delay for slower rotation. You can adjust this value as needed.
 const int delayBetweenSteps = 1000;  // 5 milliseconds
 
 void setup() {
+  pinMode(redLed, OUTPUT);
+  pinMode(greenLed, OUTPUT);
   pinMode(stepPin, OUTPUT);
   pinMode(dirPin, OUTPUT);
   
@@ -15,6 +18,13 @@ void setup() {
 }
 
 void loop() {
+  digitalWrite(redLed, HIGH);
+  digitalWrite(greenLed, LOW);
+  delay(1000);
+  digitalWrite(redLed, LOW);
+  digitalWrite(greenLed, HIGH);
+  delay(1000);
+  
   if (Serial.available()) {  // Check if data is available to read from the serial port
     char command = Serial.read();  // Read a character from the serial port
     
