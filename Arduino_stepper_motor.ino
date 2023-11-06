@@ -1,58 +1,55 @@
-int dirPin = 6;
-int stepPin = 5;
-const int stepsPerRevolution = 200;  // for your motor
-const int stepsFor90Degrees = stepsPerRevolution / 4;  // Calculate steps needed for 90 degrees
-const int stepsFor180Degrees = stepsPerRevolution / 2;  // Calculate steps needed for 180 degrees
-int redLed = 13;
-int greenled = 12;
-// Adjust the delay for slower rotation. You can adjust this value as needed.
-const int delayBetweenSteps = 1000;  // 5 milliseconds
+#include <Arduino.h>
+
+int dirPin = 5;
+int stepPin = 6;
+int stepsPerRevolution = 200; 
+
+int minDelay = 500; 
+int maxDelay = 2000; 
+int accelerationSteps = 50; 
 
 void setup() {
-  pinMode(redLed, OUTPUT);
-  pinMode(greenLed, OUTPUT);
   pinMode(stepPin, OUTPUT);
   pinMode(dirPin, OUTPUT);
-  
-  Serial.begin(115200);  // Initialize serial communication at 9600 baud
+  Serial.begin(115200); 
 }
 
 void loop() {
-  digitalWrite(redLed, HIGH);
-  digitalWrite(greenLed, LOW);
-  delay(1000);
-  digitalWrite(redLed, LOW);
-  digitalWrite(greenLed, HIGH);
-  delay(1000);
-  
-  if (Serial.available()) {  // Check if data is available to read from the serial port
-    char command = Serial.read();  // Read a character from the serial port
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    int separatorIndex = input.indexOf(':');
+    char direction = input.substring(0, separatorIndex).charAt(0);
+    float angle = input.substring(separatorIndex + 1).toFloat();
+
+    bool rotateDirection = (direction == 'R'); 
+    int steps = angleToSteps(angle);
+
+    rotateMotor(steps, rotateDirection);
+  }
+}
+
+void rotateMotor(int steps, bool direction) {
+  digitalWrite(dirPin, direction ? HIGH : LOW); // Set the direction
+  int stepDelay = maxDelay;
+  int stepChange = (maxDelay - minDelay) / accelerationSteps;
+
+  for (int i = 0; i < steps; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(stepDelay);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(stepDelay);
+
+   
+    if (i < accelerationSteps && stepDelay > minDelay) {
+      stepDelay -= stepChange;
+    }
     
-    switch (command) {
-      case 'a':  // Rotate 90 degrees to the right (clockwise)
-        rotate(stepsFor90Degrees, HIGH);
-        break;
-      case 'b':  // Rotate 90 degrees to the left (counterclockwise)
-        rotate(stepsFor90Degrees, LOW);
-        break;
-      case 'x':  // Rotate 180 degrees to the left (counterclockwise)
-        rotate(stepsFor180Degrees, LOW);
-        break;
-      case 'y':  // Rotate 180 degrees to the right (clockwise)
-        rotate(stepsFor180Degrees, HIGH);
-        break;
+    else if (i >= steps - accelerationSteps && stepDelay < maxDelay) {
+      stepDelay += stepChange;
     }
   }
 }
 
-void rotate(int steps, int direction) {
-  digitalWrite(dirPin, direction);
-  
-  for (int x = 0; x < steps; x++) {
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(delayBetweenSteps);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(delayBetweenSteps);
-  }
-  delay(1000);  // Wait a second after rotation
+int angleToSteps(float angle) {
+  return (int)(angle / 360.0 * stepsPerRevolution);
 }
