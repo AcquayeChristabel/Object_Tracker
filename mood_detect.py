@@ -9,9 +9,20 @@ import pytesseract
 from gtts import gTTS
 import sys
 import os
-pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
+
+# Specify the path to the pyterssaract softwae
+pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'  
 
 pygame.mixer.init()
+
+cap = cv2.VideoCapture(1) 
+frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+print("Frame Width:", frame_width)
+print("Frame Height:", frame_height)
+initial_center_x = frame_width / 2
+initial_center_y = frame_height / 2
 def capture_image_from_webcam():
     cap = cv2.VideoCapture(1)
     countdown_timer = 3  # Countdown from 5 seconds
@@ -84,11 +95,26 @@ def load_classes():
 def calculate_angle(deviation, frame_width):
     CAMERA_FOV_HORIZONTAL = 90
     return CAMERA_FOV_HORIZONTAL / frame_width * deviation
+def calculate_deviation(center_x, center_y):
+    # Calculate deviation from the initial center
+    horizontal_deviation = center_x - initial_center_x
+    vertical_deviation = center_y - initial_center_y
 
-def send_data_to_arduino(arduino, angle, direction, mood):
-    command = f"{direction}:{angle}:{mood}\n"  
+    return horizontal_deviation, vertical_deviation
+# def send_data_to_arduino(arduino, angle, direction, vdirection,mood):
+#     command = f"{direction}:{angle}:{vdirection}:{mood}\n"  
+#     arduino.write(command.encode('utf-8'))
+#     print(f"Sending to Arduino: {command}")  
+#     arduino.flush()
+
+def send_data_to_arduino(arduino, horiz_steps, vert_steps, mood):
+    """
+    Send the number of steps for horizontal and vertical motors, and the mood to Arduino.
+    """
+    command = f"{horiz_steps}:{vert_steps}:{mood}\n"
     arduino.write(command.encode('utf-8'))
     arduino.flush()
+
 
 def analyze_mood(face_region):
     try:
@@ -97,76 +123,189 @@ def analyze_mood(face_region):
     except Exception as e:
         print("Error in mood detection:", e)
         return None
+SCALE_FACTOR = 0.5
 
+def calculate_motor_steps(deviation, frame_dimension, steps_per_revolution, camera_fov):
+    angle_per_step = 360 / steps_per_revolution
+    angle_deviation = (deviation / frame_dimension) * camera_fov
+    steps = angle_deviation / angle_per_step
+
+    # Apply scaling factor
+    scaled_steps = steps * SCALE_FACTOR
+
+    return int(scaled_steps)
+
+# def mood_detection():
+    arduino = setup_arduino()
+    with open("angles_and_steps.txt", "w") as file:
+        net, output_layers = load_yolov4()
+        classes = load_classes()
+        cap = cv2.VideoCapture(1)
+
+        CONFIDENCE_THRESHOLD = 0.5
+        reference_center_x = None
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            height, width, _ = frame.shape
+            blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), swapRB=True, crop=False)
+            net.setInput(blob)
+            outs = net.forward(output_layers)
+
+            for out in outs:
+                for detection in out:
+                    scores = detection[5:]
+                    class_id = np.argmax(scores)
+                    confidence = scores[class_id]
+
+                    if confidence > CONFIDENCE_THRESHOLD and classes[class_id] == "person":
+                        center_x = int(detection[0] * width)
+                        center_y = int(detection[1] * height)
+                        w = int(detection[2] * width)
+                        h = int(detection[3] * height)
+
+                        x = int(center_x - w / 2)
+                        y = int(center_y - h / 2)
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                        face_region = frame[y:y+h, x:x+w]
+                        dominant_emotion = analyze_mood(face_region)
+                        horiz_dev, vert_dev = calculate_deviation(center_x, center_y)
+                        
+                        print("New Angles: ", horiz_dev, vert_dev)
+                        horiz_steps = calculate_motor_steps(horiz_dev, width, 200, 90)
+                        vert_steps = calculate_motor_steps(vert_dev, height, 200, 90)
+                        print("New steps: ", horiz_steps, vert_steps)
+                        # Determine the direction of movement
+                        horizontal_direction = 'R' if horiz_dev > 0 else 'L'
+                        vertical_direction = 'D' if vert_dev > 0 else 'U'
+                        file.write(f"Horizaonrl: {horiz_dev}, {horiz_steps}\n")
+                        file.write(f"Vertical: {vert_dev}, {vert_steps}\n")
+                        file.write(f"Direction: {horizontal_direction}, {vertical_direction}\n")
+                        file.write("+++++++++++++++++++++++++++++++++++++++++++\n\n")
+                        if dominant_emotion:
+                            print(dominant_emotion)
+                            cv2.putText(frame, dominant_emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                            if reference_center_x is None:
+                                reference_center_x = center_x
+
+                            horizontal_deviation = center_x - reference_center_x
+                            horizontal_angle = calculate_angle(horizontal_deviation, width)
+                            horizontal_direction = 'L' if horizontal_deviation < 0 else 'R'
+
+                        
+                            reference_center_y = height // 2  # Middle point in the vertical direction
+                            vertical_deviation = center_y - reference_center_y
+                            # print("Vertical Stuff")
+                            print(vertical_deviation, reference_center_y)
+                            # vertical_direction = 'N' if vertical_deviation < 100 else 'S'
+                            if vertical_deviation <= 30:
+                                vertical_direction = 'N'  
+                            elif vertical_deviation <= 100:
+                                vertical_direction = 'M'  
+                            else:
+                                vertical_direction = 'S'
+                                
+                            send_data_to_arduino(arduino, horizontal_direction, vertical_direction, dominant_emotion[0])
+                            print("=========================Sending====================================")
+                            print(horizontal_direction, vertical_direction, dominant_emotion[0])
+                            # print(f"Horizontal: {horiz_steps, vert_steps, dominant_emotion[0])")
+                            if dominant_emotion in audio_files:
+                                if audio_files[dominant_emotion] is not None:
+                                    audio_files[dominant_emotion].play()
+
+            cv2.imshow('frame', frame)
+            if cv2.waitKey(1) == ord('q'):
+                break
+
+    cap.release()
+    cv2.destroyAllWindows()
 def mood_detection():
     arduino = setup_arduino()
-    net, output_layers = load_yolov4()
-    classes = load_classes()
-    cap = cv2.VideoCapture(1)
+    with open("angles_and_steps.txt", "w") as file:
+        net, output_layers = load_yolov4()
+        classes = load_classes()
+        cap = cv2.VideoCapture(1)
 
-    CONFIDENCE_THRESHOLD = 0.5
-    reference_center_x = None
+        CONFIDENCE_THRESHOLD = 0.5
+        reference_center_x = None
+        horizontal_direction = 'N'  # Initialize to neutral
+        vertical_direction = 'N'
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+            height, width, _ = frame.shape
+            blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), swapRB=True, crop=False)
+            net.setInput(blob)
+            outs = net.forward(output_layers)
 
-        height, width, _ = frame.shape
-        blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), swapRB=True, crop=False)
-        net.setInput(blob)
-        outs = net.forward(output_layers)
+            dominant_emotion = None
+            for out in outs:
+                for detection in out:
+                    scores = detection[5:]
+                    class_id = np.argmax(scores)
+                    confidence = scores[class_id]
 
-        for out in outs:
-            for detection in out:
-                scores = detection[5:]
-                class_id = np.argmax(scores)
-                confidence = scores[class_id]
+                    if confidence > CONFIDENCE_THRESHOLD and classes[class_id] == "person":
+                        center_x = int(detection[0] * width)
+                        center_y = int(detection[1] * height)
+                        w = int(detection[2] * width)
+                        h = int(detection[3] * height)
 
-                if confidence > CONFIDENCE_THRESHOLD and classes[class_id] == "person":
-                    center_x = int(detection[0] * width)
-                    center_y = int(detection[1] * height)
-                    w = int(detection[2] * width)
-                    h = int(detection[3] * height)
+                        x = int(center_x - w / 2)
+                        y = int(center_y - h / 2)
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-                    x = int(center_x - w / 2)
-                    y = int(center_y - h / 2)
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                        face_region = frame[y:y+h, x:x+w]
+                        dominant_emotion = analyze_mood(face_region)
+                        horiz_dev, vert_dev = calculate_deviation(center_x, center_y)
+                        
+                        print("New Angles: ", horiz_dev, vert_dev)
+                        horiz_steps = calculate_motor_steps(horiz_dev, width, 200, 90)
+                        vert_steps = calculate_motor_steps(vert_dev, height, 200, 90)
+                        print("New steps: ", horiz_steps, vert_steps)
+                        
+                        file.write(f"New Angles: {horiz_dev}, {vert_dev}\n")
+                        file.write(f"New Steps: {horiz_steps}, {vert_steps}\n")
+                        file.write("+++++++++++++++++++++++++++++++++++++++++++")
+                        if dominant_emotion:
+                            cv2.putText(frame, dominant_emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                    face_region = frame[y:y+h, x:x+w]
-                    dominant_emotion = analyze_mood(face_region)
+                            if reference_center_x is None:
+                                reference_center_x = center_x
 
-                    if dominant_emotion:
-                        cv2.putText(frame, dominant_emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            horizontal_deviation = center_x - reference_center_x
+                            horizontal_angle = calculate_angle(horizontal_deviation, width)
+                            horizontal_direction = 'L' if horizontal_deviation < 0 else 'R'
 
-                        if reference_center_x is None:
-                            reference_center_x = center_x
+                        
+                            reference_center_y = height // 2  # Middle point in the vertical direction
+                            vertical_deviation = center_y - reference_center_y
+                            print("Vertical Stuff")
+                            print(vertical_deviation, reference_center_y)
+                            # vertical_direction = 'N' if vertical_deviation < 100 else 'S'
+                            if vertical_deviation <= 30:
+                                vertical_direction = 'N'  
+                            elif vertical_deviation <= 100:
+                                vertical_direction = 'M'  
+                            else:
+                                vertical_direction = 'S'
 
-                        horizontal_deviation = center_x - reference_center_x
-                        horizontal_angle = calculate_angle(horizontal_deviation, width)
-                        horizontal_direction = 'R' if horizontal_deviation < 0 else 'L'
+            # Send the data to Arduino, even if no dominant emotion is detected
+            dominant_emotion_code = dominant_emotion[0] if dominant_emotion else 'N'
+            send_data_to_arduino(arduino, horizontal_direction, vertical_direction, dominant_emotion_code)
+            print("=========================Sending====================================")
+            print(horizontal_direction, vertical_direction, dominant_emotion_code)
 
-                    
-                        reference_center_y = height // 2  # Middle point in the vertical direction
-                        vertical_deviation = center_y - reference_center_y
-                        print("Vertical Stuff")
-                        print(vertical_deviation, reference_center_y)
-                        # vertical_direction = 'N' if vertical_deviation < 100 else 'S'
-                        if vertical_deviation <= 30:
-                            vertical_direction = 'N'  
-                        elif vertical_deviation <= 100:
-                            vertical_direction = 'M'  
-                        else:
-                            vertical_direction = 'S'
-                        send_data_to_arduino(arduino, abs(horizontal_angle), horizontal_direction, vertical_direction, dominant_emotion[0])
-                        print(f"Horizontal: {abs(horizontal_angle)}° {horizontal_direction}, Vertical: {vertical_direction}, Mood: {dominant_emotion[0]}")
-                        if dominant_emotion in audio_files:
-                            if audio_files[dominant_emotion] is not None:
-                                audio_files[dominant_emotion].play()
-
-        cv2.imshow('frame', frame)
-        if cv2.waitKey(1) == ord('q'):
-            break
+            cv2.imshow('frame', frame)
+            if cv2.waitKey(1) == ord('q'):
+                break
 
     cap.release()
     cv2.destroyAllWindows()
