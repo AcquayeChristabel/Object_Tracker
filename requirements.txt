@@ -1,0 +1,8 @@
+opencv-python
+numpy
+pyserial
+deepface
+pygame
+Pillow
+pytesseract
+gtts
