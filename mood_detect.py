@@ -10,7 +10,7 @@ from gtts import gTTS
 import sys
 import os
 
-# Specify the path to the pyterssaract softwae
+
 pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'  
 
 pygame.mixer.init()
@@ -107,11 +107,8 @@ def calculate_deviation(center_x, center_y):
 #     print(f"Sending to Arduino: {command}")  
 #     arduino.flush()
 
-def send_data_to_arduino(arduino, horiz_steps, vert_steps, mood):
-    """
-    Send the number of steps for horizontal and vertical motors, and the mood to Arduino.
-    """
-    command = f"{horiz_steps}:{vert_steps}:{mood}\n"
+def send_angle_to_arduino(angle, direction, mood, vertical):
+    command = f"{direction}:{angle}:{mood}:{vertical}\n"  
     arduino.write(command.encode('utf-8'))
     arduino.flush()
 
